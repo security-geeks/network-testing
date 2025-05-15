@@ -170,7 +170,7 @@ int tap_bring_up(int tap_fd) {
 	if (1) {
 		system("tc qdisc add dev tap0 ingress");
 		system("tc filter add dev tap0 ingress protocol ip u32 match ip dst 172.17.0.1/32      action  mirred egress redirect dev tap0");
-		system("tc qdisc add dev tap0 root netem delay 1ms 1ms");
+		// system("tc qdisc add dev tap0 root netem delay 1ms 1ms");
 	}
 	close(sock);
 	return 0;
