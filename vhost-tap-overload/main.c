@@ -1,3 +1,19 @@
+/*
+ sudo rmmod vhost_net; sudo modprobe vhost_net experimental_zcopytx=0
+ make && sudo ./vhost
+
+ echo 300 |sudo tee /proc/sys/net/core/netdev_budget
+
+
+sudo timeout 2  strace -f -c -p `pidof vhost`
+
+
+ can we get busypoll to work?
+ 
+sudo sysctl -w net.core.busy_poll=5000
+ 
+*/
+
 #include <linux/if_tun.h>
 #include <errno.h>
 #include <sys/epoll.h>
@@ -114,7 +130,8 @@ int main()
 	char tap_name[16];
 	int tap_fd = tap_open("tap0", tap_name, sizeof(tap_name), IFF_NAPI );
 	printf("[ ] Tap tunnel name: %s\n", tap_name);
-	tap_bring_up(tap_fd);
+	int txqlen = 1024;
+	tap_bring_up(tap_fd, txqlen);
 
 	tap_set_offloads(tap_fd);
 
@@ -134,8 +151,8 @@ int main()
 	vhost_set_mem_table(vhost_fd, iov, 2);
 
 	struct vring_split *vrings[2];
-	vrings[0] = vring_split_new(PACKETS*4, 0);
-	vrings[1] = vring_split_new(PACKETS*4, 1);
+	vrings[0] = vring_split_new(PACKETS, 0);
+	vrings[1] = vring_split_new(PACKETS, 1);
 
 
 	vhost_setup_vring_split(vhost_fd, 0, vrings[0], tap_fd);
@@ -143,19 +160,16 @@ int main()
 
 	// RX
 	{
-		vring_recycle_bump(vrings[0], 0); // must be zero here
 		int id;
 		int i;
-		int pkts_rx = PACKETS/2 -1;
+		int pkts_rx = PACKETS;
 		for (i=0; i<pkts_rx; i++) {
 			vring_desc_put(vrings[0],
 				       &(struct iovec){.iov_base = buf_rx + 2048*i, .iov_len = 2048}, 1,
 				       &id);
-			//vring_print_id(vrings[0], id);
 		}
-		vring_kick(vrings[0], pkts_rx);
+		vring_kick(vrings[0]);
 	}
-
 
 	// TX
 	uint8_t payload[] =
@@ -183,12 +197,10 @@ int main()
 		.csum_start = 14 + 20,
 	};
 
-	int tx_size = 12 + sizeof(payload) + 1024;
-
 	uint64_t t0;
-	if (1) {
+	{
+		int tx_size = 12 + sizeof(payload) + 1024;
 		int pkts_tx = PACKETS;
-		vring_recycle_bump(vrings[1],pkts_tx/2);
 		int off;
 		for (off = 0; off < 1024 * pkts_tx; off += 1024) {
 			memcpy(buf_tx + off, &hdr, sizeof(hdr));
@@ -200,14 +212,12 @@ int main()
 				vrings[1],
 				&(struct iovec){.iov_base = buf_tx + off, .iov_len = tx_size}, 1,
 				&id);
-			// vring_print_id(vrings[1], id);
 		}
 		t0 = realtime_now();
-		vring_kick(vrings[1],pkts_tx);
+		// Always suppressed for TX
+		vring_set_suppress_notifications(vrings[1]);
+		vring_kick(vrings[1]);
 	}
-	// Always suppressed for TX
-	//vring_set_suppress_notifications(vrings[1]);
-
 
 	int call[2];
 	int errfd[2];
@@ -232,26 +242,14 @@ int main()
 		}
 	}
 
-
 	uint64_t rx_counter = 0;
 	uint64_t rx_wakeup = 0;
 	uint64_t tx_counter = 0;
 	uint64_t tx_wakeup = 0;
-	//uint64_t xt0 = realtime_now();
 	while (1) {
-		// vring_print_id(vrings[0],0);
-		// vring_print_id(vrings[1],0);
 		if (realtime_now() - t0 > 1000000000ULL) {
 			double td = (realtime_now() - t0) / 1000000000ULL;
 			t0 = realtime_now();
-			if (1 || tx_counter == 0) {
-				printf("*rx* ");
-				vring_kick(vrings[0], -1);
-				printf("*tx* ");
-				vring_kick(vrings[1], -1);
-				printf("| ");
-			}
-
 
 			printf("rx=%.3f kpps / %.1fppw", rx_counter / 1000. / td, rx_counter * 1.0/rx_wakeup);
 			printf("  tx=%.3f kpps / %.1fppw\n", tx_counter / 1000. / td, tx_counter*1.0 / tx_wakeup);
@@ -260,8 +258,6 @@ int main()
 			tx_counter = 0;
 			tx_wakeup = 0;
 		}
-		// unsigned int len = -1;
-		//int r;
 
 		struct epoll_event events[4];
 		int nfds = epoll_wait(epfd, events, 4, 1000);
@@ -270,58 +266,52 @@ int main()
 			error(-1, errno, "epoll_wait");
 		}
 
-		/* fd_set rfds; */
-		/* FD_ZERO(&rfds); */
-		/* FD_SET(call[0], &rfds); */
-		/* FD_SET(call[1], &rfds); */
-		/* FD_SET(errfd[0], &rfds); */
-		/* FD_SET(errfd[1], &rfds); */
-
-		/* select(errfd[1] + 1, &rfds, NULL, NULL, &(struct timeval){.tv_sec = 1}); */
-		// nanosleep(&(struct timespec){.tv_nsec=100}, NULL);
 		struct virtq_used_elem pkts[PACKETS];
 		uint64_t val;
 		for (int ii = 0; ii < nfds; ++ii) {
 		if (events[ii].data.fd == call[0]) {
 			rx_wakeup++;
-			//vring_set_suppress_notifications(vrings[0]);
+			vring_set_suppress_notifications(vrings[0]);
 			read(call[0], &val, sizeof(val));
 
-			int idx = vring_get_buf_bulk(vrings[0], pkts, PACKETS);
-			rx_counter += idx;
+			int needs_kick = 0;
+		again_rx:;
+			int idx = -1;
+			while (idx != 0) {
+				idx = vring_get_buf_bulk(vrings[0], pkts, PACKETS);
+				rx_counter += idx;
 
-			//vring_recycle_bump(vrings[0], idx);
-			int needs_kick = vring_recycle_bulk(vrings[0], pkts, idx);
-			if (1|| needs_kick) {
-//				printf("kick rx\n");
-				vring_kick(vrings[0], 0);
+				needs_kick |= vring_recycle_bulk(vrings[0], pkts, idx);
 			}
+			int again = vring_clear_suppress_notifications(vrings[0]);
+			if (again)
+				goto again_rx;
+
+			if (needs_kick)
+				vring_kick(vrings[0]);
+
 		}
 
 		if (events[ii].data.fd == call[1]) {
+			/* Never wakeup from suppression. With VIRTIO_F_NOTIFY_ON_EMPTY that should be fine. */
 			tx_wakeup ++;
 			read(call[1], &val, sizeof(val));
 
-			while (1) {
 			int needs_kick = 0;
+
+			while (1) {
 				int idx = vring_get_buf_bulk(vrings[1], pkts, PACKETS);
 				if (idx == 0)
 					break;
 				tx_counter += idx;
 
-				// printf("tx rx num=%d\n", idx);
-				//vring_recycle_bump(vrings[1], idx);
-				needs_kick = vring_recycle_bulk(vrings[1], pkts, idx);
-			
-//				nanosleep(&(struct timespec){.tv_nsec=100000}, NULL);
+				needs_kick |= vring_recycle_bulk(vrings[1], pkts, idx);
+			}
 
-			if (needs_kick){
-				//printf("td=%.3fms\n", (realtime_now() - xt0)/1000000.);
-				vring_kick(vrings[1], 0);
-				//printf("tx kick\n");
-			}
-			}
+			if (needs_kick)
+				vring_kick(vrings[1]);
 		}
+
 		if (events[ii].data.fd == errfd[0]) {
 			read(errfd[0], &val, sizeof(val));
 			error(-1, ECOMM, "Mem error reported on RX queue");

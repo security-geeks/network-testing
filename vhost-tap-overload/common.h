@@ -45,7 +45,7 @@ struct virtio_net_hdr {
 int tap_open(const char *usr_tap_name, char *new_tap_name, size_t new_tap_name_sz, uint32_t ifr_extra_flags);
 
 int tap_set_offloads(int tap_fd);
-int tap_bring_up(int tap_fd);
+int tap_bring_up(int tap_fd, int txqlen);
 int tap_get_src_mac(int tap_fd, uint8_t src_mac[6]);
 
 
@@ -58,7 +58,7 @@ struct vring_split* vring_split_new(uint16_t num, int bufs_device_readable);
 void vhost_setup_vring_split(int vhost_fd, uint16_t index, struct vring_split *vring, int tap_fd);
 
 int vring_desc_put(struct vring_split *vring, struct iovec *iov, int iov_cnt, int *id_ptr);
-void vring_kick(struct vring_split *vring, int cnt);
+void vring_kick(struct vring_split *vring);
 
 int vring_callfd(struct vring_split *vring);
 int vring_errfd(struct vring_split *vring);

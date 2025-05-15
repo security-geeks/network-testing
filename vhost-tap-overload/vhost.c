@@ -19,7 +19,7 @@
 #define VIRTIO_F_RING_RESET 40
 #endif
 
-#define DO_EVENT_IDX 1
+#define DO_EVENT_IDX 0
 
 int vhost_open()
 {
@@ -423,19 +423,8 @@ void vring_recycle_bump(struct vring_split *vring, uint16_t d)
 	*vring->used_event_ptr += d;
 }
 
-void vring_kick(struct vring_split *vring, int cnt)
+void vring_kick(struct vring_split *vring)
 {
-	if (cnt == -1) {
-		printf("used: %5d/%5d/%5d avail: %5d/%5d/%5d ",
-		       vring->used_idx_last,
-		       vring->used->idx,
-		       *vring->avail_event_ptr,
-		       vring->avail_idx_shadow,
-		       vring->avail->idx,
-		       *vring->used_event_ptr
-			);
-		return;
-	}
 	uint64_t v = 1;
 	write(vring->kick, &v, sizeof(v));
 }

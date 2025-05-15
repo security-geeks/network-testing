@@ -127,7 +127,7 @@ int tap_detach_queue(int tap_fd)
 	return 0;
 }
 
-int tap_bring_up(int tap_fd) {
+int tap_bring_up(int tap_fd, int txqlen) {
 	struct ifreq ifr;
 	memset(&ifr, 0, sizeof(ifr));
 
@@ -140,10 +140,8 @@ int tap_bring_up(int tap_fd) {
 		error(-1, errno, "socket");
 	}
 
-	if (0) {
-		/* memset(&ifr, 0, sizeof(ifr)); */
-		/* strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1); */
-		ifr.ifr_qlen = 1024;
+	if (txqlen) {
+		ifr.ifr_qlen = txqlen;
 
 		if (ioctl(sock, SIOCSIFTXQLEN, &ifr) < 0) {
 			error(errno, -1, "ioctl SIOCSIFTXQLEN");
@@ -192,7 +190,6 @@ int tap_get_src_mac(int tap_fd, uint8_t src_mac[6]) {
 	// Prepare ifr again with just the interface name
 	memset(&ifr, 0, sizeof(ifr));
 	strncpy(ifr.ifr_name, ifname, IFNAMSIZ);
-	
 
 	int sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (sock < 0) {
