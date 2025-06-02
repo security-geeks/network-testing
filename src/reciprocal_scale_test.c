@@ -26,10 +26,13 @@ int main(int argc, char** argv) {
 	if (argc > 1) {
 		queue = atoi(argv[1]);
 	}
+	printf("Input queue:%d\n", queue);
 
 	for (cpu = 0; cpu < 192; cpu++) {
-		uint32_t hash = cpu;
+		//uint32_t hash = cpu;
 		// you can do some trick here to avoid vlan100 thing
+		// uint32_t hash = cpu << 24;
+		uint32_t hash = (cpu << 24) *13;
 		uint32_t q = queue;
 		uint32_t actual = reciprocal_scale(hash, q);
 		printf("CPU[%d]: Hash:%u -> result: %u\n", cpu, hash, actual);
