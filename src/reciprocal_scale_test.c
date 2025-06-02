@@ -20,6 +20,8 @@ static inline uint32_t reciprocal_scale(uint32_t val, uint32_t ep_ro) {
 	return (uint32_t)(((uint64_t)val * ep_ro) >> 32);
 }
 
+#define GOLDEN_RATIO 2654435761UL
+
 int main(int argc, char** argv) {
 	int cpu;
 	int queue = 96;
@@ -32,7 +34,8 @@ int main(int argc, char** argv) {
 		//uint32_t hash = cpu;
 		// you can do some trick here to avoid vlan100 thing
 		// uint32_t hash = cpu << 24;
-		uint32_t hash = (cpu << 24) *13;
+		//uint32_t hash = (cpu << 24) * 13;
+		uint32_t hash = cpu * GOLDEN_RATIO;
 		uint32_t q = queue;
 		uint32_t actual = reciprocal_scale(hash, q);
 		printf("CPU[%d]: Hash:%u -> result: %u\n", cpu, hash, actual);
