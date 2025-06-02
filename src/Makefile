@@ -11,6 +11,7 @@ SRCS =  ipv6_example01.c udp_example02.c udp_echo.c udp_client_echo.c \
 	syscall_overhead.c \
 	get_nic_driver.c \
 	cpu_dma_latency.c \
+	reciprocal_scale_test.c \
 	udp_pacer.c
 
 # From kernel src: scripts/subarch.include
